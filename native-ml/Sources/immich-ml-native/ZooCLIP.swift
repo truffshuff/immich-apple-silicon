@@ -442,13 +442,18 @@ final class ZooCLIP {
     // (config, preprocess_cfg, tokenizer). The two model.onnx towers are the
     // large half of this list and are dead weight for a model that will be
     // served from its own safetensors checkpoint.
+    //
+    // org/only serve Gallery's models (GalleryModels.swift): a different HF
+    // org, and an explicit file list in place of the CLIP towers. Each of those
+    // is one ONNX file of 100-350 MB, so it is always worth reporting.
     static func ensureFiles(name: String, dir: URL, extra: [String] = [],
-                            needsONNX: Bool = true) throws {
-        let base = needsONNX ? files : files.filter { !$0.hasSuffix("model.onnx") }
+                            needsONNX: Bool = true, org: String = "immich-app",
+                            only: [String]? = nil) throws {
+        let base = only ?? (needsONNX ? files : files.filter { !$0.hasSuffix("model.onnx") })
         let all = base + extra
         // Only advertise a fetch worth reporting: the fixed handful is quick,
         // the external-data pass is the one measured in gigabytes.
-        let reportable = all.count > base.count
+        let reportable = all.count > base.count || only != nil
         var completed = 0
         if reportable { setProgress(FetchProgress(model: name, done: 0, total: all.count)) }
         defer { if reportable { setProgress(nil) } }
@@ -464,7 +469,7 @@ final class ZooCLIP {
             }
             try FileManager.default.createDirectory(
                 at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let url = URL(string: "https://huggingface.co/immich-app/\(name)/resolve/main/\(f)")!
+            let url = URL(string: "https://huggingface.co/\(org)/\(name)/resolve/main/\(f)")!
 
             // A large model is hundreds of files and several GB, so a single
             // dropped connection should not fail the whole fetch and leave the

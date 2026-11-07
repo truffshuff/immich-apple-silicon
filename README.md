@@ -79,6 +79,8 @@ Docker, anywhere (unmodified)       Spare Mac (ML compute only)
 
 **No extra requirement.** The ML service never touches your library on disk, only the image bytes and text sent to it, so there's no shared filesystem to align. If your actual goal is "give my Immich instance more ML horsepower," this is almost always the mode you want, not the split above.
 
+**Noodle Gallery works too.** [Noodle Gallery](https://github.com/open-noodle/gallery), an Immich fork, adds pet detection, pet recognition and Spatial Scene depth maps to the ML contract. The ML service answers those requests with Gallery's own models, fetched from its Hugging Face org on first use, so a Gallery server can point its ML URL straight at this Mac. See [Known differences](docs/known-differences.md) for how close the results are.
+
 ## Requirements
 
 - macOS on Apple Silicon (M1/M2/M3/M4)

@@ -38,6 +38,13 @@ final class ORTSession {
     // Element type (0=float32, 1=int32, 2=int64) of input `i`, per the model.
     func inputElemType(_ i: Int) -> Int { Int(ort_input_elem_type(handle, Int32(i))) }
 
+    // Declared dims of input `i`, a free dimension as -1.
+    func inputDims(_ i: Int) -> [Int] {
+        var dims = [Int64](repeating: 0, count: 8)
+        let n = ort_input_dims(handle, Int32(i), &dims, 8)
+        return n > 0 ? dims.prefix(Int(n)).map { Int($0) } : []
+    }
+
     // Number of inputs the model declares (multilingual textual towers take 2).
     func inputCount() -> Int { Int(ort_input_count(handle)) }
 
@@ -106,6 +113,24 @@ final class ORTSession {
             }
         }
         return n > 0 ? Array(out.prefix(Int(n))) : nil
+    }
+
+    // Run one tensor and return every output with its shape, in the model's
+    // declared output order.
+    func runAll(_ input: [Float], shape: [Int64]) -> [(data: [Float], shape: [Int])]? {
+        var datas = [UnsafeMutablePointer<Float>?](repeating: nil, count: 8)
+        var shapes = [Int64](repeating: 0, count: 8 * 8)
+        var ndims = [Int32](repeating: 0, count: 8)
+        let n = input.withUnsafeBufferPointer { inp in
+            ort_run_all(handle, inp.baseAddress, shape, Int32(shape.count), 8, &datas, &shapes, &ndims)
+        }
+        guard n > 0 else { return nil }
+        return (0..<Int(n)).map { i in
+            let dims = (0..<Int(ndims[i])).map { Int(shapes[i * 8 + $0]) }
+            let count = dims.reduce(1, *)
+            defer { free(datas[i]) }
+            return (Array(UnsafeBufferPointer(start: datas[i], count: count)), dims)
+        }
     }
 
     deinit { ort_free(handle) }

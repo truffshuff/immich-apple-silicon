@@ -29,10 +29,23 @@ int ort_run_multi(void *handle, int n_inputs, const void **datas,
                   const int *elem_types, const int64_t *shapes,
                   const int *ndims, float *output, int max_out);
 
+// Run a single float tensor and return EVERY output, for models whose answer
+// spans several tensors (RF-DETR's boxes + logits) or whose output shape
+// depends on the input (depth). Fills up to `max_outputs` slots: datas[i] is a
+// malloc'd float buffer the caller releases with free(), ndims[i] its rank
+// (at most 8), and its dims land at shapes[i * 8 ...]. Returns the number of
+// outputs, or -1 on failure.
+int ort_run_all(void *handle, const float *input, const int64_t *shape, int ndim,
+                int max_outputs, float **datas, int64_t *shapes, int *ndims);
+
 // Introspection: number of inputs; element type of input i (0/1/2 as above,
 // -1 unknown).
 int ort_input_count(void *handle);
 int ort_input_elem_type(void *handle, int i);
+
+// Dims of input i into `dims` (up to `max`), a free dimension as -1. Returns
+// the rank, or -1.
+int ort_input_dims(void *handle, int i, int64_t *dims, int max);
 
 // onnxruntime's version string, e.g. "1.27.1".
 const char *ort_version(void);

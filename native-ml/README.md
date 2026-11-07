@@ -20,6 +20,8 @@ Python service (`:3003`) and compared:
 | facial-recognition | Vision landmarks -> `norm_crop` -> onnxruntime ArcFace | embed **0.9997**, bbox + score **identical** |
 | ocr | Vision `VNRecognizeTextRequest` | text + boxes match |
 | combined (clip+faces+ocr, one request) | concurrent dispatch | 200, all keys present |
+| pet-detection (Noodle Gallery) | onnxruntime + CoreML, Gallery's RF-DETR + pet recognizer | vs Gallery's code: same boxes, embed cosine **0.9995+** |
+| depth-estimation (Noodle Gallery) | onnxruntime CPU, Gallery's Depth Anything V2 | vs Gallery's code: map correlation **0.998+** |
 
 `/`, `/ping`, `/health` all match the Python contract. Same weights + same
 models => embeddings live in the same space as Immich's existing index and face
@@ -35,6 +37,7 @@ no re-cluster.
 - `FaceDetect.swift`, `FaceAlign.swift`, `FaceEmbed.swift` — Vision landmarks, `norm_crop`, ArcFace embed
 - `ORTSession.swift` + `Sources/COnnxShim/` — onnxruntime C-ABI wrapper
 - `OCR.swift`, `Vision.swift` — Vision OCR + detect helpers
+- `GalleryModels.swift`, `Pets.swift`, `Depth.swift` — Noodle Gallery's pet detection, pet recognition and depth tasks
 - `Predict.swift`, `Server.swift`, `Models.swift` — dispatch, HTTP, model holder
 - `main.swift` — `serve` + parity harnesses (`texttest`, `aligntest`, `facetest`)
 

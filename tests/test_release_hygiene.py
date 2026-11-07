@@ -26,7 +26,8 @@ VERSION_FILE = REPO / "VERSION"
 
 # Matches the headings ci.yml's awk anchors on: "## X.Y.Z" followed by
 # whitespace. A heading it cannot match is invisible to the extraction.
-HEADING = re.compile(r"^## (\d+\.\d+\.\d+)[ \t]", re.MULTILINE)
+# An optional lowercase suffix (1.18.0.t) marks a personal build.
+HEADING = re.compile(r"^## (\d+\.\d+\.\d+(?:\.[a-z]+)?)[ \t]", re.MULTILINE)
 
 
 def headings() -> list[str]:

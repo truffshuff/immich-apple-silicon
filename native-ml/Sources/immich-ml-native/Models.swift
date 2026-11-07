@@ -37,6 +37,14 @@ final class Models {
     private var arcfaceSession: ORTSession?
     private var arcfaceLastUsed = ContinuousClock.now
 
+    // Gallery's models (GalleryModels.swift), keyed by name. Like the zoo, a
+    // first load can be a download, so the lock is not held across it: a
+    // request for a model already loading waits for it, the rest go ahead.
+    private let galleryCond = NSCondition()
+    private var gallerySessions: [String: ORTSession] = [:]
+    private var galleryLoading: Set<String> = []
+    private var galleryLastUsed: [String: ContinuousClock.Instant] = [:]
+
     private var idleTimer: DispatchSourceTimer?
 
     // Seconds a model may sit unused before it is released. The default matches
@@ -108,14 +116,45 @@ final class Models {
         return s
     }
 
+    func gallery(_ kind: GalleryModels.Kind, _ name: String) throws -> ORTSession {
+        galleryCond.lock()
+        while galleryLoading.contains(name) { galleryCond.wait() }
+        if let s = gallerySessions[name] {
+            galleryLastUsed[name] = .now
+            galleryCond.unlock()
+            return s
+        }
+        galleryLoading.insert(name)
+        galleryCond.unlock()
+
+        var loaded: ORTSession?
+        var failure: Error?
+        do { loaded = try GalleryModels.load(kind, name: name) } catch { failure = error }
+
+        galleryCond.lock()
+        galleryLoading.remove(name)
+        if let s = loaded {
+            gallerySessions[name] = s
+            galleryLastUsed[name] = .now
+        }
+        galleryCond.broadcast()
+        galleryCond.unlock()
+
+        if let s = loaded { return s }
+        throw failure ?? PredictError(status: "500 Internal Server Error", message: "could not load \(name)")
+    }
+
     // The compiled CoreML model is about 330 MB and onnxruntime keys it by a
     // hash, so a new onnxruntime or model would add a copy beside the old one
     // every time. Name the folder after what it was compiled from and remove
     // any other, so there is only ever one.
     // nil when the model file isn't there, so a missing model never clears a
     // good compile.
-    static func coreMLCache(for modelPath: String) -> URL? {
-        let root = NATIVE_CACHE_DIR.appendingPathComponent("coreml")
+    //
+    // Every other entry in `root` is removed, so each model needs a root of its
+    // own: Gallery's models keep theirs beside the model (GalleryModels.swift).
+    static func coreMLCache(for modelPath: String,
+                            in root: URL = NATIVE_CACHE_DIR.appendingPathComponent("coreml")) -> URL? {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: modelPath),
               let size = (attrs[.size] as? NSNumber)?.int64Value,
               let modified = attrs[.modificationDate] as? Date
@@ -174,6 +213,14 @@ final class Models {
             released.append("arcface")
         }
         arcfaceLock.unlock()
+
+        galleryCond.lock()
+        for (name, used) in galleryLastUsed where used.duration(to: .now) >= cutoff {
+            gallerySessions[name] = nil
+            galleryLastUsed[name] = nil
+            released.append(name)
+        }
+        galleryCond.unlock()
 
         guard !released.isEmpty else { return }
         // Releasing the arrays is not enough on its own: MLX keeps freed device

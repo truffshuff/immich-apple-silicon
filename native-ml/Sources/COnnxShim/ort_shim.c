@@ -71,9 +71,11 @@ static void *load(const char *model_path, const char *coreml_cache, int *used_co
     int coreml = 0;
     if (coreml_cache) {
         // CoreML only takes static shapes. ArcFace declares its batch as the
-        // free dimension "None" and is always run one face at a time, so pin
-        // it to 1; left dynamic, CoreML takes nothing and it all stays on CPU.
+        // free dimension "None", Gallery's pet recognizer as "batch", and both
+        // are run one crop at a time, so pin them to 1; left dynamic, CoreML
+        // takes nothing and it all stays on CPU.
         failed(g->AddFreeDimensionOverrideByName(h->opts, "None", 1), "batch override");
+        failed(g->AddFreeDimensionOverrideByName(h->opts, "batch", 1), "batch override");
         const char *keys[] = {"ModelFormat", "MLComputeUnits", "RequireStaticInputShapes",
                               "ModelCacheDirectory"};
         const char *vals[] = {"MLProgram", "CPUAndNeuralEngine", "1", coreml_cache};
@@ -226,6 +228,69 @@ int ort_run_multi(void *handle, int n_inputs, const void **datas,
     return count;
 }
 
+int ort_run_all(void *handle, const float *input, const int64_t *shape, int ndim,
+                int max_outputs, float **datas, int64_t *shapes, int *ndims) {
+    OrtHandle *h = (OrtHandle *)handle;
+    if (!h || !g || max_outputs < 1) return -1;
+
+    OrtAllocator *alloc;
+    g->GetAllocatorWithDefaultOptions(&alloc);
+    size_t n_out = 0;
+    g->SessionGetOutputCount(h->session, &n_out);
+    if (n_out < 1 || n_out > (size_t)max_outputs || n_out > 8) return -1;
+
+    OrtMemoryInfo *mem = NULL;
+    g->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &mem);
+    size_t n = 1;
+    for (int i = 0; i < ndim; i++) n *= (size_t)shape[i];
+    OrtValue *in_t = NULL;
+    if (g->CreateTensorWithDataAsOrtValue(mem, (void *)input, n * sizeof(float), (int64_t *)shape,
+                                          (size_t)ndim, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+                                          &in_t) || !in_t) {
+        if (mem) g->ReleaseMemoryInfo(mem);
+        return -1;
+    }
+
+    char *out_names[8] = {0};
+    OrtValue *outs[8] = {0};
+    for (size_t i = 0; i < n_out; i++) g->SessionGetOutputName(h->session, i, alloc, &out_names[i]);
+    const char *in_names[] = {h->in_name};
+    OrtStatus *st = g->Run(h->session, NULL, in_names, (const OrtValue *const *)&in_t, 1,
+                           (const char *const *)out_names, n_out, outs);
+
+    int count = -1;
+    if (!failed(st, "inference failed")) {
+        count = (int)n_out;
+        for (size_t i = 0; i < n_out; i++) datas[i] = NULL;
+        for (size_t i = 0; i < n_out; i++) {
+            OrtTensorTypeAndShapeInfo *info = NULL;
+            g->GetTensorTypeAndShape(outs[i], &info);
+            size_t rank = 0, c = 0;
+            g->GetDimensionsCount(info, &rank);
+            g->GetTensorShapeElementCount(info, &c);
+            if (rank > 8) rank = 8;
+            g->GetDimensions(info, shapes + i * 8, rank);
+            g->ReleaseTensorTypeAndShapeInfo(info);
+            ndims[i] = (int)rank;
+            float *od = NULL;
+            g->GetTensorMutableData(outs[i], (void **)&od);
+            datas[i] = malloc(c * sizeof(float));
+            if (!datas[i]) { count = -1; break; }
+            memcpy(datas[i], od, c * sizeof(float));
+        }
+        if (count < 0)
+            for (size_t i = 0; i < n_out; i++) { free(datas[i]); datas[i] = NULL; }
+    }
+
+    for (size_t i = 0; i < n_out; i++) {
+        if (outs[i]) g->ReleaseValue(outs[i]);
+        if (out_names[i]) g->AllocatorFree(alloc, out_names[i]);
+    }
+    g->ReleaseValue(in_t);
+    if (mem) g->ReleaseMemoryInfo(mem);
+    return count;
+}
+
 int ort_input_count(void *handle) {
     OrtHandle *h = (OrtHandle *)handle;
     if (!h || !g) return -1;
@@ -250,6 +315,21 @@ int ort_input_elem_type(void *handle, int i) {
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64: return 2;
     default: return -1;
     }
+}
+
+int ort_input_dims(void *handle, int i, int64_t *dims, int max) {
+    OrtHandle *h = (OrtHandle *)handle;
+    if (!h || !g) return -1;
+    OrtTypeInfo *ti = NULL;
+    if (g->SessionGetInputTypeInfo(h->session, (size_t)i, &ti) || !ti) return -1;
+    const OrtTensorTypeAndShapeInfo *tsi = NULL;
+    g->CastTypeInfoToTensorInfo(ti, &tsi);
+    size_t rank = 0;
+    if (tsi) g->GetDimensionsCount(tsi, &rank);
+    if (rank > (size_t)max) rank = (size_t)max;
+    if (tsi) g->GetDimensions(tsi, dims, rank);
+    g->ReleaseTypeInfo(ti);
+    return (int)rank;
 }
 
 void ort_free(void *handle) {

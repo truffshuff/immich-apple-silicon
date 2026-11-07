@@ -33,7 +33,8 @@ func processPredict(entries: [String: Any], imageData: Data?, text: String?, mod
     // `[t for t in tasks.keys() if t in (...)]` used for the summary line.
     // Reflects what was requested, not what actually produced a result (same
     // as python: a task that silently no-ops still counts here).
-    let requestedTaskNames = ["clip", "facial-recognition", "ocr"].filter { entries[$0] != nil }
+    let requestedTaskNames = ["clip", "facial-recognition", "ocr", "pet-detection", "depth-estimation"]
+        .filter { entries[$0] != nil }
 
     // Prints "  <name>: Nms" once `body` returns true (a result was produced),
     // matching python's `_timed` wrapper, which only logs `if result is not None`.
@@ -116,6 +117,51 @@ func processPredict(entries: [String: Any], imageData: Data?, text: String?, mod
             let rec = optDouble(cfg, "recognition", "minScore") ?? 0.0
             response["ocr"] = recognizeTextImmich(imageData: data, minScore: Float(max(det, rec)),
                                                   languageCorrection: true)
+            return true
+        }
+    }
+
+    // Noodle Gallery's tasks (GalleryModels.swift). Gallery's service answers
+    // pet-detection with the recognizer's output when the request asks for
+    // recognition too, and with the detector's alone otherwise.
+    if let cfgAny = entries["pet-detection"] {
+        let cfg = cfgAny as? [String: Any] ?? [:]
+        try timed("pets") {
+            guard let rgb = rgb else { return false }
+            guard let det = cfg["detection"] as? [String: Any], let detName = det["modelName"] as? String else {
+                throw PredictError(status: "400 Bad Request",
+                                   message: "PetRecognizer depends on output of pet-detection detection")
+            }
+            let minScore = optDouble(cfg, "detection", "minScore") ?? 0.3
+            let pets = try detectPets(rgb: rgb, w: W, h: H, session: try models.gallery(.petDetector, detName),
+                                      minScore: Float(minScore))
+            var embeddings: [[Float]?] = Array(repeating: nil, count: pets.count)
+            if let recName = (cfg["recognition"] as? [String: Any])?["modelName"] as? String {
+                embeddings = try embedPets(rgb: rgb, w: W, h: H, pets: pets,
+                                           session: try models.gallery(.petRecognizer, recName))
+            }
+            response["pet-detection"] = zip(pets, embeddings).map { pet, e -> [String: Any] in
+                var out: [String: Any] = [
+                    "boundingBox": ["x1": pet.x1, "y1": pet.y1, "x2": pet.x2, "y2": pet.y2],
+                    "score": Double(pet.score),
+                    "label": pet.label,
+                ]
+                if let e { out["embedding"] = pyListString(e) }
+                return out
+            }
+            print("[native-ml]   pets: \(pets.count) detected")
+            return true
+        }
+    }
+
+    if let cfgAny = entries["depth-estimation"] {
+        let cfg = cfgAny as? [String: Any] ?? [:]
+        try timed("depth") {
+            guard let rgb = rgb, let name = (cfg["depth"] as? [String: Any])?["modelName"] as? String else {
+                return false
+            }
+            response["depth-estimation"] = try estimateDepth(rgb: rgb, w: W, h: H,
+                                                             session: try models.gallery(.depth, name))
             return true
         }
     }
