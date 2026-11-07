@@ -41,7 +41,7 @@ final class Models {
     // first load can be a download, so the lock is not held across it: a
     // request for a model already loading waits for it, the rest go ahead.
     private let galleryCond = NSCondition()
-    private var gallerySessions: [String: ORTSession] = [:]
+    private var gallerySessions: [String: AnyObject] = [:]  // ORTSession, or a DepthEngine
     private var galleryLoading: Set<String> = []
     private var galleryLastUsed: [String: ContinuousClock.Instant] = [:]
 
@@ -117,6 +117,14 @@ final class Models {
     }
 
     func gallery(_ kind: GalleryModels.Kind, _ name: String) throws -> ORTSession {
+        try galleryModel(name) { try GalleryModels.load(kind, name: name) } as! ORTSession
+    }
+
+    func galleryDepth(_ name: String) throws -> DepthEngine {
+        try galleryModel(name) { try GalleryModels.loadDepth(name: name) } as! DepthEngine
+    }
+
+    private func galleryModel(_ name: String, load: () throws -> AnyObject) throws -> AnyObject {
         galleryCond.lock()
         while galleryLoading.contains(name) { galleryCond.wait() }
         if let s = gallerySessions[name] {
@@ -127,9 +135,9 @@ final class Models {
         galleryLoading.insert(name)
         galleryCond.unlock()
 
-        var loaded: ORTSession?
+        var loaded: AnyObject?
         var failure: Error?
-        do { loaded = try GalleryModels.load(kind, name: name) } catch { failure = error }
+        do { loaded = try load() } catch { failure = error }
 
         galleryCond.lock()
         galleryLoading.remove(name)

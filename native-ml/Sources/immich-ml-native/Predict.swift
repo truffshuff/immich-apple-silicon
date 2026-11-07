@@ -161,7 +161,7 @@ func processPredict(entries: [String: Any], imageData: Data?, text: String?, mod
                 return false
             }
             response["depth-estimation"] = try estimateDepth(rgb: rgb, w: W, h: H,
-                                                             session: try models.gallery(.depth, name))
+                                                             engine: try models.galleryDepth(name))
             return true
         }
     }

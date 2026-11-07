@@ -337,8 +337,8 @@ final class SigLIPNative {
     // on-device. Cached per Immich model name so switching between e.g.
     // ViT-B-16-SigLIP2 and ViT-L-16-SigLIP2-256 doesn't re-fetch either one
     // a second time.
-    static func ensureWeights(hfRepo: String, name: String) throws -> String {
-        let dir = cacheDir.appendingPathComponent(name)
+    static func ensureWeights(hfRepo: String, name: String, root: URL = cacheDir) throws -> String {
+        let dir = root.appendingPathComponent(name)
         let dst = dir.appendingPathComponent("model.safetensors")
         if ((try? dst.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) ?? 0 > 0 {
             return dst.path

@@ -25,6 +25,11 @@ enum GalleryModels {
     // path Gallery's own container takes on a CPU-only server.
     static let int8Depth: Set = ["depth-anything-v2-small", "distill-any-depth-small"]
 
+    // Depth models that run on the GPU instead (DepthNative), with the Hugging
+    // Face repo of the checkpoint Gallery exported its ONNX from unmodified.
+    // fp32 large on the CPU took ~13 s a photo; this takes ~1 s.
+    static let nativeDepth = ["distill-any-depth-large": "xingyang1/Distill-Any-Depth-Large-hf"]
+
     enum Kind {
         case petDetector, petRecognizer, depth
 
@@ -72,5 +77,21 @@ enum GalleryModels {
         }
         print("[native-ml] \(name) on \(session.usesCoreML ? "CoreML" : "CPU")")
         return session
+    }
+
+    // A depth model on the GPU where there is a native port, falling back to
+    // the ONNX export on the CPU if its weights cannot be fetched or loaded.
+    static func loadDepth(name: String) throws -> DepthEngine {
+        if let repo = nativeDepth[name] {
+            do {
+                let path = try SigLIPNative.ensureWeights(hfRepo: repo, name: name, root: dir)
+                let model = try DepthNative(weightsPath: path)
+                print("[native-ml] \(name) on GPU (MLX)")
+                return model
+            } catch {
+                print("[native-ml] \(name): MLX load failed (\(error)), using ONNX on the CPU")
+            }
+        }
+        return try load(.depth, name: name)
     }
 }

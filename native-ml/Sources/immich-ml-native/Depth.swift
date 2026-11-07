@@ -4,8 +4,9 @@ import ImageIO
 import UniformTypeIdentifiers
 
 // Gallery's monocular depth for Spatial Scene, ported from open-noodle/gallery
-// machine-learning/immich_ml/models/depth_estimation/depth.py (its CPU path,
-// which is the one this runs; see GalleryModels.int8Depth). Answers with an
+// machine-learning/immich_ml/models/depth_estimation/depth.py (its CPU path
+// for the small models, see GalleryModels.int8Depth; the large one runs on the
+// GPU, see DepthNative). Answers with an
 // 8-bit depth map normalised per photo, 255 nearest, plus the metrics the
 // server decides Spatial Scene eligibility from.
 
@@ -19,7 +20,20 @@ private let imagenetStd: [Float] = [0.229, 0.224, 0.225]
 // A disparity step per pixel on the normalised map that counts as an occlusion edge.
 private let edgeStep: Float = 0.04
 
-func estimateDepth(rgb: [UInt8], w: Int, h: Int, session: ORTSession) throws -> [String: Any] {
+// A depth model: MLX on the GPU (DepthNative) or the ONNX export through
+// onnxruntime. Both take the same normalised CHW blob and give raw disparity.
+protocol DepthEngine: AnyObject {
+    func depth(_ blob: [Float], h: Int, w: Int) -> (data: [Float], h: Int, w: Int)?
+}
+
+extension ORTSession: DepthEngine {
+    func depth(_ blob: [Float], h: Int, w: Int) -> (data: [Float], h: Int, w: Int)? {
+        guard let out = runAll(blob, shape: [1, 3, Int64(h), Int64(w)])?.first, out.shape.count >= 2 else { return nil }
+        return (out.data, out.shape[out.shape.count - 2], out.shape[out.shape.count - 1])
+    }
+}
+
+func estimateDepth(rgb: [UInt8], w: Int, h: Int, engine: DepthEngine) throws -> [String: Any] {
     // The photo's own aspect, as the CPU provider allows.
     let scale = Double(shortSide) / Double(min(w, h))
     func snap(_ side: Int) -> Int {
@@ -36,11 +50,10 @@ func estimateDepth(rgb: [UInt8], w: Int, h: Int, session: ORTSession) throws -> 
             blob[c * plane + i] = (Float(resized[i * 3 + c]) / 255 - imagenetMean[c]) / imagenetStd[c]
         }
     }
-    guard let out = session.runAll(blob, shape: [1, 3, Int64(inH), Int64(inW)])?.first,
-          out.shape.count >= 2 else {
+    guard let out = engine.depth(blob, h: inH, w: inW) else {
         throw PredictError(status: "500 Internal Server Error", message: "depth estimation failed")
     }
-    let mh = out.shape[out.shape.count - 2], mw = out.shape[out.shape.count - 1]
+    let mh = out.h, mw = out.w
     let disparity = normaliseDepth(out.data)
 
     // The PNG rounds; the metrics' uint8 view truncates. Both as Gallery does.

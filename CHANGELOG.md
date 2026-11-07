@@ -5,7 +5,7 @@
 Personal build on top of 1.18.0 (the `.t` suffix marks it). Not an upstream release.
 
 ### Added
-- **The ML service answers Noodle Gallery's pet and depth requests.** Noodle Gallery, an Immich fork, adds `pet-detection` (with pet recognition) and `depth-estimation` for Spatial Scene to the ML contract. The native service ran neither and silently answered without them, so pets and depth maps needed a second ML server. It now runs Gallery's own models, fetched from its Hugging Face org on first use: RF-DETR and the pet recognizer on CoreML, Depth Anything on the CPU the way Gallery's own container runs it there. Against Gallery's code the pet boxes match and the embeddings sit at cosine 0.9995 or better, and the depth maps correlate at 0.998 or better. CLIP, faces and OCR are unchanged.
+- **The ML service answers Noodle Gallery's pet and depth requests.** Noodle Gallery, an Immich fork, adds `pet-detection` (with pet recognition) and `depth-estimation` for Spatial Scene to the ML contract. The native service ran neither and silently answered without them, so pets and depth maps needed a second ML server. It now runs Gallery's own models, fetched from its Hugging Face org on first use: RF-DETR and the pet recognizer on CoreML, Depth Anything on the CPU the way Gallery's own container runs it there, except the large model, which runs on the GPU through MLX in about 1 s a photo instead of 13 s and matches the ONNX output to within one level of 255. Against Gallery's code the pet boxes match and the embeddings sit at cosine 0.9995 or better, and the depth maps correlate at 0.998 or better. CLIP, faces and OCR are unchanged.
 
 ## 1.18.0 - 2026-10-28
 
