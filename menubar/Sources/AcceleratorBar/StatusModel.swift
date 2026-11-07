@@ -42,6 +42,22 @@ struct QueueProgress: Equatable, Identifiable {
     var remaining: Int { max(total - done, 0) }
 }
 
+/// One of Immich's queues whose work the ML service does, straight from
+/// /api/jobs. Unlike QueueProgress it needs neither the dashboard nor a
+/// database, so it is what an ML-only box has to say about its own work.
+struct MLQueue: Equatable, Sendable {
+    let label: String
+    let pending: Int  // active + waiting
+
+    /// Immich's queue names and what the panel calls them, in display order.
+    /// The last two are Noodle Gallery's; stock Immich has neither, and a
+    /// queue the server does not report is left out.
+    static let known: [(queue: String, label: String)] = [
+        ("smartSearch", "CLIP"), ("faceDetection", "Faces"), ("ocr", "OCR"),
+        ("petDetection", "Pets"), ("spatialScene", "Depth"),
+    ]
+}
+
 /// Something only a person can fix, from the two files the watch loop writes:
 /// notice.json (macOS waiting on a permission, say) and paused.json (why it
 /// stopped the worker). Same wording as attention() in common.py.
@@ -136,9 +152,12 @@ struct Snapshot: Equatable {
     var downloadDone = 0
     var downloadTotal = 0
     // nil = not checked this cycle (the key is only exercised while the worker
-    // is up). Distinguishing that from false matters: a stopped worker must not
-    // make a perfectly good key look rejected.
+    // or ML is up). Distinguishing that from false matters: a stopped service
+    // must not make a perfectly good key look rejected.
     var apiKeyValid: Bool?
+    /// The ML queues the server reports, idle ones included. Empty when we
+    /// could not ask.
+    var mlQueues: [MLQueue] = []
     /// Per-queue completion, populated only when the dashboard is serving.
     ///
     /// The dashboard is an enrichment here, never a dependency: 1.8.0 made the
@@ -372,6 +391,7 @@ final class StatusModel: ObservableObject {
         s.jobsWaiting = counts.waiting
         s.immichReachable = await reachable
         s.apiKeyValid = counts.authed
+        s.mlQueues = counts.ml
         // nil means the dashboard did not answer in time. Keep what we last
         // knew: a slow poll is not news, and dropping the rows for one cycle
         // resizes the panel under the user's pointer.
@@ -468,7 +488,9 @@ final class StatusModel: ObservableObject {
         p.mlEnabled = componentEnabled("ml", config)
         p.dashboardEnabled = componentEnabled("dashboard", config)
         p.mlPort = (config["ml_port"] as? Int) ?? 3003
-        p.apiKey = (p.workerUp ? config["api_key"] as? String : nil) ?? ""
+        // Either service gives the job counts something to say: the worker's
+        // backlog, or what an ML-only box is being sent.
+        p.apiKey = (p.workerUp || p.mlUp ? config["api_key"] as? String : nil) ?? ""
         return p
     }
 
@@ -519,27 +541,33 @@ final class StatusModel: ObservableObject {
     // guaranteed 401, and polling one every few seconds would fill the user's
     // Immich log for no benefit. `authed` is nil when we did not ask.
     nonisolated static func jobCounts(base: String, apiKey: String)
-        async -> (active: Int, waiting: Int, authed: Bool?) {
+        async -> (active: Int, waiting: Int, authed: Bool?, ml: [MLQueue]) {
         guard !base.isEmpty, !apiKey.isEmpty, let url = URL(string: "\(base)/api/jobs")
-        else { return (0, 0, nil) }
+        else { return (0, 0, nil, []) }
         var req = URLRequest(url: url)
         req.timeoutInterval = 3
         req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              let http = resp as? HTTPURLResponse else { return (0, 0, nil) }
+              let http = resp as? HTTPURLResponse else { return (0, 0, nil, []) }
         // 200 means the key was accepted; 401/403 means it was rejected. Any
         // other status says nothing about the key, so leave it unknown.
         guard http.statusCode == 200,
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return (0, 0, [401, 403].contains(http.statusCode) ? false : nil) }
+        else { return (0, 0, [401, 403].contains(http.statusCode) ? false : nil, []) }
         var active = 0, waiting = 0
-        for (_, value) in obj {
+        var pending: [String: Int] = [:]
+        for (name, value) in obj {
             guard let queue = value as? [String: Any],
                   let counts = queue["jobCounts"] as? [String: Any] else { continue }
-            active += (counts["active"] as? Int) ?? 0
-            waiting += (counts["waiting"] as? Int) ?? 0
+            let a = (counts["active"] as? Int) ?? 0, w = (counts["waiting"] as? Int) ?? 0
+            active += a
+            waiting += w
+            pending[name] = a + w
         }
-        return (active, waiting, true)
+        let ml = MLQueue.known.compactMap { q in
+            pending[q.queue].map { MLQueue(label: q.label, pending: $0) }
+        }
+        return (active, waiting, true, ml)
     }
 
     // Is Immich itself up? Unauthenticated and independent of the worker, so

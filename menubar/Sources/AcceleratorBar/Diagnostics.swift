@@ -83,8 +83,8 @@ enum Diagnostics {
             out.append(Check(label: "API key", detail: "not set (job counts disabled)",
                              level: .warn))
         } else {
-            // The key is only exercised while the worker is up, so an unchecked
-            // key reads as "set", never as rejected.
+            // The key is only exercised while the worker or ML is up, so an
+            // unchecked key reads as "set", never as rejected.
             switch snap.apiKeyValid {
             case .some(true):
                 out.append(Check(label: "API key", detail: "valid", level: .ok))
@@ -93,7 +93,7 @@ enum Diagnostics {
                                  level: .fail))
             case .none:
                 out.append(Check(label: "API key",
-                                 detail: "set (not checked while the worker is stopped)",
+                                 detail: "set (not checked while nothing is running)",
                                  level: .info))
             }
         }

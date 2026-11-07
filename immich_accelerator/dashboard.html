@@ -432,8 +432,12 @@ const CHIPS = [
   { chip: 'cpu', chipLabel: 'CPU (NEON)', tasks: [
     { key: 'thumbnails', rk: 'thumbs', label: 'Thumbnails' },
   ]},
+  // Pets and Depth are Noodle Gallery's queues. They have no library count
+  // behind them, so they are drawn only when the server reports the queue, and
+  // their rate is how fast that queue drains.
   { chip: 'gpu', chipLabel: 'Metal GPU', tasks: [
     { key: 'clip', rk: 'clip', label: 'CLIP Embeddings' },
+    { key: 'depth', rk: 'depth', label: 'Depth (Spatial Scenes)' },
   ]},
   // Two rows, not one. These were merged into a single "Face Detection · OCR"
   // bar, which could not be right: faces is counted over assets-with-previews
@@ -443,6 +447,7 @@ const CHIPS = [
   { chip: 'ane', chipLabel: 'Neural Engine', tasks: [
     { key: 'faces', rk: 'faces', label: 'Face Detection' },
     { key: 'ocr', rk: 'ocr', label: 'Text (OCR)' },
+    { key: 'pets', rk: 'pets', label: 'Pet Detection' },
   ]},
   { chip: 'vtb', chipLabel: 'VideoToolbox', tasks: [
     { key: 'video', rk: 'video', label: 'Video Transcode' },
@@ -451,16 +456,23 @@ const CHIPS = [
 
 let prevSnapshot = null;
 let prevTime = null;
-const rates = { thumbs: 0, clip: 0, faces: 0, ocr: 0, video: 0 };
+const rates = { thumbs: 0, clip: 0, faces: 0, ocr: 0, video: 0, pets: 0, depth: 0 };
+// Rated by how fast their queue empties, not by a done count.
+const DRAINED = ['pets', 'depth'];
 
-function calcRates(progress) {
+function calcRates(d) {
   const now = Date.now();
+  const progress = d.progress;
+  const qc = d.queue_counts || {};
   const snap = {
     thumbs: progress.thumbnails.done,
     clip: progress.clip.done,
     faces: progress.faces.done,
     ocr: progress.ocr.done,
     video: progress.video.done,
+    // Negated, so a shrinking queue counts up like a done count does.
+    pets: -(qc.pets || 0),
+    depth: -(qc.depth || 0),
   };
 
   if (prevSnapshot && prevTime) {
@@ -468,7 +480,8 @@ function calcRates(progress) {
     if (dt > 0.05) {
       for (const k of Object.keys(rates)) {
         const delta = snap[k] - prevSnapshot[k];
-        const raw = delta / dt;
+        // A queue that grew had work added, which says nothing about speed.
+        const raw = DRAINED.includes(k) ? Math.max(delta, 0) / dt : delta / dt;
         rates[k] = rates[k] ? Math.round(rates[k] * 0.7 + raw * 0.3) : Math.round(raw);
       }
     }
@@ -574,7 +587,7 @@ function renderCoverage(d) {
 let autoClicks = 0;
 
 function render(d) {
-  calcRates(d.progress);
+  calcRates(d);
   renderCoverage(d);
   if (d._clicks === autoClicks) document.getElementById('auto-requeue').checked = d.auto_requeue !== false;
 
@@ -631,10 +644,13 @@ function render(d) {
     header.textContent = chip.chipLabel;
     card.appendChild(header);
 
-    const isMulti = chip.tasks.length > 1;
+    // A queue-only task is drawn only when the server reports its queue.
+    const tasks = chip.tasks.filter(t =>
+      d.progress[t.key] || (d.queue_counts && t.key in d.queue_counts));
+    const isMulti = tasks.length > 1;
 
-    chip.tasks.forEach((t, idx) => {
-      const p = d.progress[t.key];
+    tasks.forEach((t, idx) => {
+      const p = d.progress[t.key] || { done: 0, total: 0 };
       const rate = rates[t.rk] || 0;
       const qc = (d.queue_counts && d.queue_counts[t.key]) || 0;
       const rem = qc > 0 ? qc : (p.total - p.done);

@@ -348,9 +348,16 @@ def get_status(config: dict) -> dict:
                     "faceDetection": "faces",
                     "ocr": "ocr",
                     "videoConversion": "video",
+                    # Noodle Gallery's own ML queues. Stock Immich has neither,
+                    # and a queue the server does not have is left out rather
+                    # than reported idle, so the page draws no row for it.
+                    "petDetection": "pets",
+                    "spatialScene": "depth",
                 }
                 for immich_name, our_name in queue_map.items():
-                    counts = jobs.get(immich_name, {}).get("jobCounts", {})
+                    if immich_name not in jobs:
+                        continue
+                    counts = jobs[immich_name].get("jobCounts", {})
                     active = counts.get("active", 0)
                     waiting = counts.get("waiting", 0)
                     queue_status[our_name] = (active + waiting) > 0

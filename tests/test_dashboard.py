@@ -354,6 +354,34 @@ class TestGetStatus:
         assert status["progress"]["video"]["pct"] == 61.4
         assert status["progress"]["video"]["unqueued"] == 2961
 
+    def test_only_queues_the_server_has_are_reported(self, sample_config):
+        """Noodle's pet and depth queues appear when Noodle reports them, and a
+        stock Immich, which has neither, gets no Pets or Depth rows at all."""
+        stock = self._status_with_idle_queues(sample_config, "")
+        assert "pets" not in stock["queue_counts"]
+        assert "depth" not in stock["queue_counts"]
+
+        import immich_accelerator.dashboard as d
+
+        d._cache_ts = 0
+        body = json.dumps(
+            {
+                "smartSearch": {"jobCounts": {"active": 0, "waiting": 0}},
+                "petDetection": {"jobCounts": {"active": 1, "waiting": 4}},
+                "spatialScene": {"jobCounts": {"active": 2, "waiting": 54676}},
+            }
+        ).encode()
+        resp = MagicMock()
+        resp.read.return_value = body
+        resp.__enter__ = lambda s: resp
+        resp.__exit__ = MagicMock(return_value=False)
+        with patch("urllib.request.urlopen", return_value=resp), patch(
+            "immich_accelerator.dashboard._query_db", return_value=""
+        ), patch("immich_accelerator.dashboard._run", return_value=""):
+            noodle = get_status(sample_config)
+        assert noodle["queue_counts"] == {"clip": 0, "pets": 5, "depth": 54678}
+        assert noodle["queue_active"]["depth"] is True
+
     def test_unqueued_is_zero_when_the_jobs_api_is_unreachable(self, sample_config):
         """Unreachable is not idle: with no answer we cannot claim anything."""
         import immich_accelerator.dashboard as d

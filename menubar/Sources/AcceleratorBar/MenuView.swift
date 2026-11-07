@@ -176,7 +176,18 @@ struct MenuView: View {
             let pct = model.snap.downloadDone * 100 / max(model.snap.downloadTotal, 1)
             return "Downloading model… \(pct)%"
         }
-        if model.snap.mlHealthy { return "CLIP · Faces · OCR" }
+        if model.snap.mlHealthy {
+            // What it is being sent, biggest backlog first; idle, what the
+            // server can send it. Two at most: the row is one line.
+            let queues = model.snap.mlQueues
+            let busy = queues.filter { $0.pending > 0 }.sorted { $0.pending > $1.pending }
+            if !busy.isEmpty {
+                return busy.prefix(2).map { "\($0.label) \($0.pending.formatted())" }
+                    .joined(separator: " · ") + " queued"
+            }
+            return queues.isEmpty ? "CLIP · Faces · OCR"
+                : queues.map(\.label).joined(separator: " · ")
+        }
         if model.snap.mlUp { return "Starting…" }
         return "Not running"
     }
