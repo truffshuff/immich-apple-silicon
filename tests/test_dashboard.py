@@ -681,6 +681,13 @@ class TestDashboardHtmlDoneLabel:
         assert "const working = rate > 0 || qActive;" in chips
         assert "'done'" not in chips
 
+    def test_a_drained_queue_can_reach_idle(self):
+        """Rounding the smoothed rate before storing it held an empty queue at
+        1/min forever, so its row said "finishing" and never went idle."""
+        src = self.HTML_PATH.read_text()
+        calc = src[src.index("function calcRates") : src.index("function n(v)")]
+        assert "smoothed < 0.5 ? 0 : smoothed" in calc
+
 
 class TestAttention:
     """What needs a person: shown as a banner on the dashboard and a row in the

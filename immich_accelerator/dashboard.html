@@ -482,7 +482,10 @@ function calcRates(d) {
         const delta = snap[k] - prevSnapshot[k];
         // A queue that grew had work added, which says nothing about speed.
         const raw = DRAINED.includes(k) ? Math.max(delta, 0) / dt : delta / dt;
-        rates[k] = rates[k] ? Math.round(rates[k] * 0.7 + raw * 0.3) : Math.round(raw);
+        // The fraction is kept: rounding the stored value pinned an idle rate
+        // at 1 forever, because Math.round(1 * 0.7) is 1.
+        const smoothed = rates[k] ? rates[k] * 0.7 + raw * 0.3 : raw;
+        rates[k] = smoothed < 0.5 ? 0 : smoothed;
       }
     }
   }
@@ -494,7 +497,7 @@ function calcRates(d) {
 function n(v) { return v.toLocaleString(); }
 
 function etaStr(remaining, rate) {
-  if (!rate || rate <= 0) return '';
+  if (!rate || rate <= 0 || remaining <= 0) return '';
   const m = remaining / rate;
   if (m < 60) return Math.round(m) + 'm left';
   const h = m / 60;
@@ -681,7 +684,7 @@ function render(d) {
       // A rate needs two polls, so a queue that just started says Working.
       now.className = 'task-pct' + (isMulti ? ' sub' : '')
         + (rate > 0 ? '' : ' word') + (working ? '' : ' idle');
-      now.textContent = rate > 0 ? n(rate) + '/min' : (working ? 'Working' : 'Idle');
+      now.textContent = rate > 0 ? n(Math.round(rate)) + '/min' : (working ? 'Working' : 'Idle');
       top.appendChild(label);
       top.appendChild(now);
       row.appendChild(top);
